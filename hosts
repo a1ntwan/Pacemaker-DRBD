@@ -1,0 +1,10 @@
+all:
+  children:
+    primary:
+      hosts:
+        master: 
+          ansible_host: 10.10.10.21 
+    secondary:
+      hosts:
+        slave: 
+          ansible_host: 10.10.10.22

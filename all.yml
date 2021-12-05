@@ -1,0 +1,8 @@
+---
+- name: 'configure DRBD and Pacemaker with Corosync'
+  hosts: all
+  become: yes
+  any_errors_fatal: true
+
+  roles:
+    - pacemaker

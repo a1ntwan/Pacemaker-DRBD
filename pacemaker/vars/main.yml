@@ -1,0 +1,28 @@
+---
+disk_patrition: /dev/sda1
+resource_name: drbd0
+
+nginx_domain_name: nginx.example.net
+
+db_user:  user
+db_password: qwerty
+db_name: test_db
+
+bindnetaddr: 10.10.10.0
+
+hacluster_passwd: passwd
+cluster_name: cluster
+
+fence_passwd: passwd
+
+resources:
+  drbd: drbd0
+  filesystem: fs
+  db: mariadb
+  webserver: nginx
+  vip: 10.10.10.25
+
+fencevbox:
+  dom0: 10.10.10.1
+  dom0_user: user
+  dom0_passwd: password

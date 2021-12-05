@@ -1,0 +1,40 @@
+---
+- name: restart-drbd
+  systemd:
+    name: drbd.service
+    state: restarted
+    enabled: yes
+
+- name: restart php-fpm rh
+  systemd:
+    name: php-fpm
+    state: restarted
+    enabled: yes
+  listen: restart-php
+  ignore_errors: true
+
+- name: restart php-fpm debian
+  systemd:
+    name: php8.0-fpm
+    state: restarted
+    enabled: yes
+  listen: restart-php
+  ignore_errors: true
+
+- name: stop-mariadb
+  systemd:
+    name: mariadb
+    state: stopped
+    enabled: no
+
+- name: stop-mysql
+  systemd:
+    name: mysql
+    state: stopped
+    enabled: no
+
+- name: stop-nginx
+  systemd:
+    name: nginx
+    state: stopped
+    enabled: no

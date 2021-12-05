@@ -1,0 +1,120 @@
+---
+- name: provision
+  hosts: all
+  become: yes
+
+
+  tasks:
+
+    - name: Set timezone Europe/Moscow
+      timezone:
+        name: Europe/Moscow
+
+    - name: install
+      yum: 
+        name: "{{ item }}"
+        state: latest
+        update_cache: yes
+      loop:
+        - vim
+        - openssh-server
+        - git
+        - bash-completion
+        - chrony
+      when: ansible_distribution_file_variety == 'RedHat'
+
+    - name: install
+      apt:
+        name: "{{ item }}"
+        state: latest
+        update_cache: yes
+      loop:
+        - vim
+        - openssh-server
+        - git
+        - bash-completion
+        - chrony
+      when: ansible_distribution == 'Ubuntu' or ansible_distribution == 'Debian'
+
+    - name: fix locale issues
+      shell:
+        cmd: printf 'LC_CTYPE="en_US.UTF-8"\nLC_ALL="en_US.UTF-8"\nLANG="en_US.UTF-8"\n' > /etc/default/locale
+         
+    - name: allow root
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '.*PermitRootLogin no'
+        line: 'PermitRootLogin yes'
+   
+    - name: allow password login
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '.*PasswordAuthentication no'
+        line: 'PasswordAuthentication yes'
+   
+    - name: set pass
+      user:
+        name: root
+        password: "{{ '1' | password_hash('sha512') }}"
+        generate_ssh_key: yes
+        ssh_key_bits: 4096
+        ssh_key_file: .ssh/id_rsa
+      notify: restart sshd
+
+    - name: '[Debian/Ubuntu] install chrony' 
+      apt:
+        name: chrony
+        state: latest
+        update_cache: yes
+      notify: restart-chrony
+      when: ansible_distribution_file_variety == 'Debian'
+ 
+    - name: '[Redhat] install chrony'
+      yum:
+        name: chrony
+        state: latest
+        update_cache: yes
+      notify: restart-chrony 
+      when: ansible_distribution_file_variety == 'RedHat'
+
+    - name: configure chrony
+      lineinfile: 
+        path: /etc/chrony.conf
+        regexp: #pool 2.pool.ntp.org iburst
+        line: pool 2.pool.ntp.org iburst
+      notify: restart-chrony 
+      when: 
+        - ansible_os_family == 'Rocky'
+
+    - name: stop firewalld
+      systemd:
+        name: firewalld
+        state: stopped
+        enabled: no
+      when: ansible_distribution_file_variety == 'RedHat'
+
+    - name: stop ufw
+      systemd:
+        name: ufw
+        state: stopped
+        enabled: no
+      when: ansible_distribution == 'Ubuntu' or ansible_distribution == 'Debian'
+
+    - name: turn off selinux
+      shell:
+        cmd: setenforce 0 && sed -i 's/SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config
+      when: ansible_distribution_file_variety == 'RedHat'
+    
+  handlers:
+    
+    - name: restart sshd
+      systemd:
+        name: sshd
+        state: restarted
+        enabled: yes
+
+    - name: restart-chrony
+      systemd:
+        name: chronyd
+        state: started
+        enabled: yes

@@ -1,0 +1,34 @@
+---
+- name: 'configure DRBD'
+  import_tasks: drbd.yml
+
+- name: 'configure MariaDB'
+  import_tasks: mysql.yml
+
+- name: 'configure php-fpm and Wordpress'
+  import_tasks: php.yml
+
+- name: 'configure Nginx'
+  import_tasks: nginx.yml
+
+- name: 'configure Pacemaker'
+  import_tasks: pacemaker.yml
+
+- pause:
+    prompt: 'Before configuring resources please check one more time if Corosync and Pacemaker are running without any problems'
+
+- name: 'configure resources'
+  import_tasks: resources.yml
+  when: inventory_hostname == 'master'
+
+- name: 'configure fencing with fence_ssh'
+  import_tasks: stonith_ssh.yml
+  when:
+    - inventory_hostname == 'master'
+    - ansible_distribution_file_variety == 'RedHat'
+
+- name: 'configure fencing with fence_vbox'
+  import_tasks: stonith_vbox.yml
+  when:
+    - inventory_hostname == 'master'
+    - ansible_distribution_file_variety == 'Debian'
