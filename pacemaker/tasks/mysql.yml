@@ -1,0 +1,128 @@
+---
+- name: 'data dir for database on master'
+  file:
+    path: /var/lib/mysql
+    state: directory
+    mode: '0700'
+  when:
+    - inventory_hostname == 'master'
+    - "'UpToDate' in disk.stdout"
+  tags:
+    - disks
+
+- block:
+
+    - name: '[RHEL] mount db lib dir on master'
+      mount:
+        path: /var/lib/mysql
+        src: '/dev/{{ resource_name }}'
+        state: mounted
+        fstype: xfs
+      when:
+        - ansible_distribution_file_variety == 'RedHat'
+        - inventory_hostname == 'master'
+
+    - name: '[RHEL] install MariaDB'
+      yum:
+        name: '{{ item }}'
+        state: latest
+        update_cache: yes
+      loop:
+        - python3-pip
+        - python3-devel
+        - mariadb
+        - mariadb-server
+
+    - name: '[RHEL] edit MariaDB config'
+      lineinfile:
+        path: /etc/my.cnf
+        line: '{{ item }}'
+      run_once: true
+      loop:
+        - "bind-address            = 127.0.0.1"
+        - "mysqlx-bind-address     = 127.0.0.1"
+
+  when: ansible_distribution_file_variety == 'RedHat'
+
+- block:
+
+    - name: '[Debian] mount db lib dir on master'
+      mount:
+        path: /var/lib/mysql
+        src: '/dev/{{ resource_name }}'
+        state: mounted
+        fstype: ext4
+      when:
+        - ansible_distribution_file_variety == 'Debian'
+        - inventory_hostname == 'master'
+
+    - name: '[Debian] install MariaDB'
+      apt:
+        name: '{{ item }}'
+        state: latest
+      loop:
+        - python3-pip
+        - python3-dev
+        - mariadb-server
+
+    - name: '[Debian] edit MariaDB config'
+      lineinfile:
+        path: /etc/mysql/mariadb.conf.d/50-server.cnf
+        regexp: '{{ item.from }}'
+        line: '{{ item.to }}'
+      run_once: true
+      loop:
+        - { from: "bind-address", to: "bind-address            = 127.0.0.1" }
+
+  when: ansible_distribution_file_variety == 'Debian'
+
+- name: 'install PyMySQL'
+  pip:
+    name: '{{ item }}'
+    state: latest
+  vars:
+    ansible_python_interpreter: /bin/python3
+  loop:
+    - pip
+    - setuptools
+    - wheel
+    - PyMySQL
+
+- name: 'restart MariaDB'
+  systemd:
+    name: mariadb
+    state: restarted
+    enabled: yes
+
+- name: 'create test db'
+  mysql_db:
+    name: '{{ db_name }}'
+    state: present
+  vars:
+    ansible_python_interpreter: /bin/python3
+
+- name: 'create user with all database privileges'
+  mysql_user:
+    name: '{{ db_user }}'
+    host: '{{ item }}'
+    password: '{{ db_password }}'
+    priv: '*.*:ALL'
+    state: present
+  loop:
+    - 127.0.0.1
+    - localhost
+  vars:
+    ansible_python_interpreter: /bin/python3
+
+- name: 'turn off db'
+  systemd:
+    name: mariadb
+    state: stopped
+    enabled: no
+
+- name: 'empty db lib dir on slave'
+  shell:
+    cmd: /usr/bin/rm -rf * && /usr/bin/rm -rf .[a-z]*
+    chdir: /var/lib/mysql/
+  when:
+    - inventory_hostname != 'master'

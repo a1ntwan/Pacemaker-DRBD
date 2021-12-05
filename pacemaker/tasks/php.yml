@@ -1,0 +1,188 @@
+---
+- name: 'discover server timezone'
+  shell:
+    cmd: /usr/bin/timedatectl status | /usr/bin/grep "Time zone:" | /usr/bin/awk '{print$3}'
+  register: timezone
+
+- name: '[RHEL] install php and php-fpm'
+  block:
+
+    - name: '[RHEL] create default user nginx for php-fpm'
+      user:
+        name: nginx
+        create_home: no
+        system: yes
+
+    - name: '[RHEL] add php repository'
+      yum:
+        name: '{{ item }}'
+        update_cache: yes
+        validate_certs: no
+        state: latest
+      loop:
+        - https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+        - https://rpms.remirepo.net/enterprise/remi-release-7.rpm
+      tags:
+        - install
+
+    - name: '[RHEL] enable php8 repo and disable all others'
+      shell:
+        cmd: /usr/bin/yum-config-manager --disable 'remi-php*' && /usr/bin/yum-config-manager --enable remi-php80
+      tags:
+        - install
+
+    - name: '[RHEL] install php8 and php8.0-fpm'
+      yum:
+        name: '{{ item }}'
+        state: latest
+        update_cache: yes
+      loop:
+        - yum-utils
+        - php
+        - php-fpm
+        - php-common
+        - php-mysql
+      tags:
+         - install
+
+    - name: '[RHEL] create access logfile'
+      file:
+        path: /var/log/php-fpm/www.access.log
+        state: touch
+
+    - name: '[RHEL] edit php.ini'
+      lineinfile:
+        path: /etc/php.ini
+        regexp: '{{ item.before }}'
+        line: '{{ item.after }}'
+      loop:
+        - { before: ';cgi.fix_pathinfo=1', after: 'cgi.fix_pathinfo=0' }
+        - { before: ';date.timezone', after: 'date.timezone = "{{ timezone.stdout }}"' }
+
+    - name: '[RHEL] copy www.conf template'
+      template:
+        src: www.conf.j2
+        dest: /etc/php-fpm.d/www.conf
+
+    - name: '[RHEL] create index.php dir'
+      file:
+        path: /usr/share/nginx/html/
+        owner: nginx
+        group: nginx
+        state: directory
+
+    - name: '[RHEL] download Wordpress'
+      unarchive:
+        src: https://ru.wordpress.org/latest-ru_RU.tar.gz
+        dest: /usr/share/nginx/html
+        owner: nginx
+        group: nginx
+        remote_src: yes
+
+    - name: '[RHEL] delete archieve'
+      file:
+        path: /usr/share/nginx/html/latest-ru_RU.tar.gz
+        state: absent
+
+    - name: '[RHEL] create keys and salts'
+      shell:
+        cmd: /usr/bin/curl -L https://api.wordpress.org/secret-key/1.1/salt/
+      register: wp_keys
+
+    - name: '[RHEL] copy wp-config file'
+      template:
+        src: wp-config-sample.php.j2
+        dest: /usr/share/nginx/html/wordpress/wp-config.php
+        owner: nginx
+        group: nginx
+      notify: restart-php
+
+  when: ansible_distribution_file_variety == 'RedHat'
+
+
+- name: '[Debian] install php and php-fpm'
+  block:
+
+    - name: '[Debian] add repo for php8.0'
+      apt_repository:
+        repo: ppa:ondrej/php
+      tags:
+        - install
+
+    - name: '[Debian] install php8 and php8.0-fpm'
+      apt:
+        name: '{{ item }}'
+        state: latest
+        update_cache: yes
+      loop:
+        - php8.0
+        - php8.0-fpm
+        - php8.0-common
+        - php8.0-mysql
+      tags:
+         - install
+
+    - name: '[Debian] turn off default apache2'
+      systemd:
+        name: apache2
+        state: stopped
+        enabled: no
+
+    - name: '[Debian] make log dir'
+      file:
+        path: /var/log/php-fpm/
+        state: directory
+
+    - name: '[Debian] create access logfile'
+      file:
+        path: /var/log/php-fpm/www.access.log
+        state: touch
+
+    - name: '[Debian] edit php.ini'
+      lineinfile:
+        path: /etc/php/8.0/fpm/php.ini
+        regexp: '{{ item.before }}'
+        line: '{{ item.after }}'
+      loop:
+        - { before: ';cgi.fix_pathinfo=1', after: 'cgi.fix_pathinfo=0' }
+        - { before: ';date.timezone', after: 'date.timezone = "{{ timezone.stdout }}"' }
+
+    - name: '[Debian] copy www.conf template'
+      template:
+        src: www.conf.j2
+        dest: /etc/php/8.0/fpm/pool.d/www.conf
+
+    - name: '[Debian] create index.php dir'
+      file:
+        path: /usr/share/nginx/html/
+        owner: www-data
+        group: www-data
+        state: directory
+
+    - name: '[Debian] download Wordpress'
+      unarchive:
+        src: https://ru.wordpress.org/latest-ru_RU.tar.gz
+        dest: /usr/share/nginx/html
+        owner: www-data
+        group: www-data
+        remote_src: yes
+
+    - name: '[Debian] delete archieve'
+      file:
+        path: /usr/share/nginx/html/latest-ru_RU.tar.gz
+        state: absent
+
+    - name: '[Debian] create keys and salts'
+      shell:
+        cmd: /usr/bin/curl -L https://api.wordpress.org/secret-key/1.1/salt/
+      register: wp_keys
+
+    - name: '[Debian] copy wp-config file'
+      template:
+        src: wp-config-sample.php.j2
+        dest: /usr/share/nginx/html/wordpress/wp-config.php
+        owner: www-data
+        group: www-data
+      notify: restart-php
+
+  when: ansible_distribution_file_variety == 'Debian'

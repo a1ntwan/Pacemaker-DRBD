@@ -1,0 +1,161 @@
+---
+- name: '[RHEL] import ELRepo GPG key'
+  rpm_key:
+    key: https://www.elrepo.org/RPM-GPG-KEY-elrepo.org 
+    state: present
+  when: ansible_distribution_file_variety == 'RedHat'
+  tags:
+    - install
+
+- name: '[RHEL] install ELRepo'
+  yum:
+    name: https://www.elrepo.org/elrepo-release-7.el7.elrepo.noarch.rpm
+    state: present
+    update_cache: yes
+  when: ansible_distribution_file_variety == 'RedHat'
+  tags:
+    - install
+
+- name: '[RHEL] install DRBD'
+  yum:
+    name: '{{ item }}'
+    state: latest
+  loop:
+    - drbd90-utils
+    - kmod-drbd90
+  when: ansible_distribution_file_variety == 'RedHat'
+  tags:
+    - install
+
+- name: '[Debian] add repo for DRBD'
+  apt_repository:
+    repo: ppa:linbit/linbit-drbd9-stack
+  when: ansible_distribution_file_variety == 'Debian'
+  tags:
+    - install
+
+- name: '[Debian] install DRBD'
+  apt:
+    name: '{{ item }}'
+    state: latest
+    update_cache: yes
+  loop:
+    - drbd-utils
+    - drbd-dkms
+  when: ansible_distribution_file_variety == 'Debian'
+  tags:
+    - install
+
+- name: 'all ips to all hosts'
+  lineinfile:
+    dest: /etc/hosts
+    line: "{{ hostvars[item]['ansible_host'] }} {{ hostvars[item]['ansible_hostname'] }}.{{ ansible_domain }} {{ hostvars[item]['ansible_hostname'] }}"
+    state: present
+  with_items: "{{ groups['all'] }}"
+
+- name: 'insert drbd kernel module'
+  modprobe:
+    name: drbd
+    state: present
+  tags:
+    - install
+
+- name: 'add drbd module to /etc/modules-load.d'
+  lineinfile:
+     create: yes
+     path: /etc/modules-load.d/drbd.conf
+     line: drbd
+  tags:
+    - install
+
+- name: 'create dir'
+  file:
+    path: /etc/drbd.d/
+    state: directory
+  tags:
+    - install
+
+- name: 'copy drbd config'
+  copy:
+    src: global_common.conf
+    dest: /etc/drbd.d/global_common.conf
+  tags:
+    - install
+
+- name: 'copy resource config'
+  template:
+    src: "{{ resource_name }}.res.j2"
+    dest: /etc/drbd.d/{{ resource_name }}.res
+  tags:
+    - install
+
+- name: 'create metadata on disks'
+  shell:
+    cmd: "/usr/sbin/drbdadm create-md {{ resource_name }}"
+  register: metadata_creation
+  tags:
+    - disks
+
+- name: 'show results'
+  debug:
+    var: metadata_creation.stdout_lines
+  tags:
+    - disks
+
+- name: 'attach DRBD to disks'
+  shell:
+    cmd: "/usr/sbin/drbdadm up {{ resource_name }}"
+  when: "'New drbd meta data block successfully created.' in metadata_creation.stdout"
+  tags:
+    - disks
+
+- name: 'make master disk primary'
+  shell:
+    cmd: "/usr/sbin/drbdadm primary --force {{ resource_name }}"
+  when: inventory_hostname == 'master'
+  tags:
+    - disks
+
+- name: 'check DRBD master'
+  shell:
+    cmd: "/usr/bin/cat /sys/kernel/debug/drbd/resources/{{ resource_name }}/connections/{{ hostvars['slave']['ansible_hostname'] }}/0/proc_drbd"
+  register: proc_drbd
+  when: inventory_hostname == 'master'
+  tags:
+    - disks
+
+- name: 'show results'
+  debug:
+    var: proc_drbd.stdout_lines
+  when: inventory_hostname == 'master'
+  tags:
+    - disks
+
+- name: 'check if master is up to date'
+  shell:
+    cmd: "/usr/sbin/drbdadm dstate {{ resource_name }} | /usr/bin/cut -f1 -d'/'"
+  register: disk
+  tags:
+    - disks
+
+- name: '[RHEL] create filesystem if master is in UpToDate state'
+  filesystem:
+    fstype: xfs
+    dev: '/dev/{{ resource_name }}'
+  when:
+    - ansible_distribution_file_variety == 'RedHat'
+    - inventory_hostname == 'master'
+    - "'UpToDate' in disk.stdout"
+  tags:
+    - disks
+
+- name: '[Debian] create filesystem if master is in UpToDate state'
+  filesystem:
+    fstype: ext4
+    dev: '/dev/{{ resource_name }}'
+  when:
+    - ansible_distribution_file_variety == 'Debian'
+    - inventory_hostname == 'master'
+    - "'UpToDate' in disk.stdout"
+  tags:
+    - disks

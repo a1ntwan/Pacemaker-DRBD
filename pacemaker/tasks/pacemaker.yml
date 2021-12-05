@@ -1,0 +1,188 @@
+---
+- name: '[RHEL] install Corosync and Pacemaker'
+  yum:
+    name: '{{ item }}'
+    state: latest
+    update_cache: yes
+  loop:
+    - corosync
+    - pacemaker
+    - pcs
+    - resource-agents
+    - fence-agents-all
+    - fence-agents-virsh
+  when: ansible_distribution_file_variety == 'RedHat'
+  tags:
+    - install
+
+- name: '[Debian] install Corosync and Pacemaker'
+  apt:
+    name: '{{ item }}'
+    state: latest
+    update_cache: yes
+  loop:
+    - corosync
+    - pacemaker
+    - pcs
+    - pacemaker-resource-agents
+    - fence-agents
+    - libvirt-clients
+    - sshpass
+  when: ansible_distribution_file_variety == 'Debian'
+  tags:
+    - install
+
+- name: 'copy corosync.conf'
+  template:
+    src: corosync.conf.j2
+    dest: /etc/corosync/corosync.conf
+
+- name: 'create log file for corosync'
+  file:
+    path: '{{ item.path }}'
+    state: '{{ item.state }}'
+  loop:
+    - { path: '/var/log/cluster', state: 'directory' }
+    - { path: '/var/log/cluster/corosync.log', state: 'touch' }
+
+- name: 'start corosync'
+  systemd:
+    name: corosync
+    state: restarted
+    enabled: yes
+
+- name: 'check corosync state[1/2]'
+  shell:
+    cmd: /usr/sbin/corosync-quorumtool -pl
+
+- name: '[RHEL] check corosync state[2/2]'
+  shell:
+    cmd: /usr/sbin/corosync-quorumtool -pl | /usr/bin/grep "{{ hostvars['master']['ansible_host'] }}\|{{ hostvars['slave']['ansible_host'] }}" | /usr/bin/wc -l
+  register: corosync_nodes
+  when: ansible_distribution_file_variety == 'RedHat'
+  failed_when: corosync_nodes.stdout != "2"
+
+- name: '[Debian] check corosync state[2/2]'
+  shell:
+    cmd: /usr/sbin/corosync-quorumtool -pl | /usr/bin/grep "{{ hostvars['master']['ansible_fqdn'] }}\|{{ hostvars['slave']['ansible_host'] }}" | /usr/bin/wc -l
+  register: corosync_nodes
+  when: ansible_distribution_file_variety == 'Debian'
+  failed_when: corosync_nodes.stdout != "2"
+
+- name: 'set password for user hacluster'
+  user:
+    name: hacluster
+    password: "{{ hacluster_passwd | password_hash('sha512') }}"
+
+- name: 'start pcsd'
+  systemd:
+    name: pcsd.service
+    state: started
+    enabled: yes
+
+- name: 'pcs cluster configuration on master'
+  block:
+
+    - name: '[RHEL] authenticate pcs to pcsd'
+      shell:
+        cmd: /usr/sbin/pcs cluster auth {{ hostvars['master']['ansible_host'] }} {{ hostvars['slave']['ansible_host'] }} -u hacluster -p {{ hacluster_passwd }}
+      register: auth_result
+      when: ansible_distribution_file_variety == 'RedHat'
+
+    - name: '[Debian] authenticate pcs to pcsd'
+      shell:
+        cmd: /usr/sbin/pcs host auth {{ hostvars['master']['ansible_host'] }} {{ hostvars['slave']['ansible_host'] }} -u hacluster -p {{ hacluster_passwd }}
+      register: auth_result
+      when: ansible_distribution_file_variety == 'Debian'
+
+    - name: 'show results'
+      debug:
+        var: auth_result.stdout_lines
+
+    - name: '[RHEL] configure master'
+      shell:
+        cmd: /usr/sbin/pcs cluster setup --force --name {{ cluster_name }} {{ hostvars['master']['ansible_host'] }} {{ hostvars['slave']['ansible_host'] }}
+      register: config_result
+      when: ansible_distribution_file_variety == 'RedHat'
+
+    - name: '[Debian] configure master'
+      shell:
+        cmd: /usr/sbin/pcs cluster setup --force {{ cluster_name }} {{ hostvars['master']['ansible_host'] }} {{ hostvars['slave']['ansible_host'] }}
+      register: config_result
+      when: ansible_distribution_file_variety == 'Debian'
+
+    - name: 'show results'
+      debug:
+        var: config_result.stdout_lines
+
+    - name: 'start cluster'
+      shell:
+        cmd: /usr/sbin/pcs cluster start --all && /usr/sbin/pcs cluster enable --all
+
+    - name: 'check cluster state'
+      shell:
+          cmd: /usr/sbin/pcs resource cleanup && /usr/sbin/pcs status
+      register: pcs_status
+      failed_when:
+        - "'corosync: active/enabled' not in pcs_status.stdout"
+        - "'pacemaker: active/enabled' not in pcs_status.stdout"
+        - "'pcsd: active/enabled' not in pcs_status.stdout"
+
+  when: inventory_hostname == 'master'
+
+
+- name: '[RHEL] create user fence for fencing'
+  user:
+    name: fence
+    password: "{{ fence_passwd | password_hash('sha512') }}"
+    comment: fencing user
+    shell: /bin/bash
+    groups: wheel
+    generate_ssh_key: yes
+    ssh_key_bits: 4096
+    ssh_key_file: .ssh/id_rsa
+    system: yes
+  when: ansible_distribution_file_variety == 'RedHat'
+
+- name: '[Debian] create user fence for fencing'
+  user:
+    name: fence
+    password: "{{ fence_passwd | password_hash('sha512') }}"
+    comment: fencing user
+    shell: /bin/bash
+    groups: sudo
+    generate_ssh_key: yes
+    ssh_key_bits: 4096
+    ssh_key_file: .ssh/id_rsa
+    system: yes
+  when: ansible_distribution_file_variety == 'Debian'
+
+- name: 'configure fence user'
+  lineinfile:
+    path: /etc/sudoers.d/fence
+    create: yes
+    state: present
+    line: 'fence  ALL=(ALL:ALL) NOPASSWD:/usr/sbin/shutdown'
+    validate: /usr/sbin/visudo -cf %s
+
+- name: 'place public key in a variable'
+  shell:
+    cmd: cat /home/fence/.ssh/id_rsa.pub
+  register: keys
+
+- name: 'exchange fence keys between all nodes'
+  authorized_key:
+    user: fence
+    key: '{{ item[0] }}'
+  delegate_to: '{{ item[1] }}'
+  with_nested:
+    - "{{ keys.stdout }}"
+    - "{{ groups['all'] }}"
+
+- name: 'download ssh fencing agent'
+  get_url:
+    url: https://raw.githubusercontent.com/nannafudge/fence_ssh/master/fence_ssh
+    dest: /usr/sbin/fence_ssh
+    owner: fence
+    group: fence
+    mode: '0700'

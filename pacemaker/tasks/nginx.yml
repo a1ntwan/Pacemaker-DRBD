@@ -1,0 +1,76 @@
+---
+- name: '[RHEL] install nginx'
+  block:
+
+    - name: '[RHEL] create user nginx'
+      user:
+        name: nginx
+        system: yes
+      tags:
+        - install
+
+    - name: '[RHEL] install nginx'
+      yum:
+        name: '{{ item }}'
+        state: latest
+        update_cache: yes
+      loop:
+        - nginx
+      tags:
+        - install
+
+
+    - name: '[RHEL] create nginx dir'
+      file:
+        path: /usr/share/nginx/html/
+        state: directory
+        owner: nginx
+        group: nginx
+        mode: '0775'
+
+    - name: '[RHEL] copy nginx.conf'
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/conf.d/default.conf
+        owner: nginx
+        group: nginx
+      notify: stop-nginx
+      tags:
+        - install
+
+  when: ansible_distribution_file_variety == 'RedHat'
+
+- name: '[Debian] install nginx'
+  block:
+
+    - name: '[Debian]  install nginx'
+      apt:
+        name: '{{ item }}'
+        state: latest
+        update_cache: yes
+      loop:
+        - nginx-full
+      tags:
+        - install
+
+    - name: '[Debian] create nginx dir'
+      file:
+        path: /usr/share/nginx/html/
+        state: directory
+        owner:  www-data
+        group:  www-data
+        mode: '0775'
+      tags:
+        - install
+
+    - name: '[Debian] copy nginx.conf'
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/sites-available/default
+        owner: www-data
+        group: www-data
+      notify: stop-nginx
+      tags:
+        - install
+
+  when: ansible_distribution_file_variety == 'Debian'

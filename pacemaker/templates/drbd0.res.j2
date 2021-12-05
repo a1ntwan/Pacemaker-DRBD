@@ -1,0 +1,12 @@
+resource {{ resource_name }} {
+    device /dev/{{ resource_name }};
+    disk {{ disk_patrition }};
+    meta-disk  internal;
+
+{% for server in groups['all'] %}
+    on {{ hostvars[server]['ansible_hostname'] }} {
+        node-id {{ loop.index0 }};
+        address {{ hostvars[server]['ansible_host'] }}:7789;
+    }
+{% endfor %}
+}

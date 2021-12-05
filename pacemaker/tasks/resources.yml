@@ -1,0 +1,292 @@
+---
+- name: 'disable cluster to use STONITH'
+  shell:
+    cmd: /usr/sbin/pcs property set stonith-enabled=false
+
+- name: 'turn off quorum policy, because we have only 2 nodes'
+  shell:
+    cmd: /usr/sbin/pcs property set no-quorum-policy=ignore
+
+- name: 'set resource-stickiness to 200'
+  shell:
+    cmd: /usr/sbin/pcs resource defaults resource-stickiness=200
+
+- pause:
+    prompt: 'Please check if cluser id healthy using "pcs status"'
+
+- name: 'create DRBD resource'
+  shell:
+    cmd: >
+      /usr/sbin/pcs resource create {{ resources.drbd }} ocf:linbit:drbd
+      drbdconf=/etc/drbd.conf
+      drbd_resource={{ resource_name }}
+      ignore_missing_notifications=true
+      op monitor interval=10s
+  register: drbd_failure
+  failed_when: "drbd_failure.rc != 0 and drbd_failure.rc == 1 and drbd_failure.stderr != 'Error: \\'{{ resources.drbd }}\\' already exists'"
+
+- pause:
+    prompt: 'Please check if DRBD resource is created correctly'
+
+- name: '[RHEL] create DRBD master resource'
+  shell:
+    cmd: >
+      /usr/sbin/pcs resource master {{ resources.drbd }}
+      promoted-max=1
+      promoted-node-max=1
+      clone-max=2
+      clone-node-max=1
+      notify=true
+  register: drbd_master_failure
+  failed_when: "drbd_master_failure.rc != 0 and drbd_master_failure.rc == 1 and drbd_master_failure.stderr != 'Error: {{ resources.drbd }} is already a master/slave resource'"
+  when: ansible_distribution_file_variety == 'RedHat'
+
+- name: '[Debian] create DRBD promotable resource'
+  shell:
+    cmd: >
+      /usr/sbin/pcs resource promotable {{ resources.drbd }}
+      promoted-max=1
+      promoted-node-max=1
+      clone-max=2
+      clone-node-max=1
+      notify=true
+  register: drbd_master_failure
+  failed_when: "drbd_master_failure.rc != 0 and drbd_master_failure.rc == 1 and drbd_master_failure.stderr != 'Error: drbd0 is already a clone resource'"
+  when: ansible_distribution_file_variety == 'Debian'
+
+- pause:
+    prompt: 'Please check if clone resource is created correctly'
+
+- name: 'check DRBD resources'
+  shell:
+    cmd: /usr/sbin/pcs resource cleanup && /usr/sbin/pcs status
+  register: drbd_resource
+
+- name: 'show resources'
+  debug:
+    var: drbd_resource.stdout_lines
+
+- name: '[RHEL] create filesystem resource'
+  shell:
+    cmd: >
+      /usr/sbin/pcs resource create {{ resources.filesystem }} ocf:heartbeat:Filesystem
+      device=/dev/{{ resource_name }}
+      directory=/var/lib/mysql
+      fstype=xfs
+  register: fs_failure
+  when: ansible_distribution_file_variety == 'RedHat'
+  failed_when: "fs_failure.rc != 0 and fs_failure.rc == 1 and fs_failure.stderr != 'Error: \\'{{ resources.filesystem }}\\' already exists'"
+
+- name: '[Debian] create filesystem resource'
+  shell:
+    cmd: >
+      /usr/sbin/pcs resource create {{ resources.filesystem }} ocf:heartbeat:Filesystem
+      device=/dev/{{ resource_name }}
+      directory=/var/lib/mysql
+      fstype=ext4
+  register: fs_failure
+  when: ansible_distribution_file_variety == 'Debian'
+  failed_when: "fs_failure.rc != 0 and fs_failure.rc == 1 and fs_failure.stderr != 'Error: \\'{{ resources.filesystem }}\\' already exists'"
+
+- pause:
+    prompt: 'Please check if filesystem resource is created correctly'
+
+- name: 'check filesystem resource'
+  shell:
+    cmd: /usr/sbin/pcs resource cleanup && /usr/sbin/pcs status
+  register: fs_resource
+
+- name: 'show resources'
+  debug:
+    var: fs_resource.stdout_lines
+
+- name: '[RHEL] create MariaDB resource'
+  shell:
+    cmd: >
+      /usr/sbin/pcs resource create {{ resources.db }} ocf:heartbeat:mysql
+      binary="/usr/bin/mysqld_safe"
+      config="/etc/my.cnf"
+      datadir="/var/lib/mysql"
+      pid="/var/lib/mysql/mysql.pid"
+      user="mysql"
+      additional_parameters="--bind-address=127.0.0.1"
+      op start timeout=60s
+      op stop timeout=60s
+      op monitor interval=20s
+      --group Web
+  register: mysql_failure
+  when: ansible_distribution_file_variety == 'RedHat'
+  failed_when: "mysql_failure.rc != 0 and mysql_failure.rc == 1 and mysql_failure.stderr != 'Error: \\'{{ resources.db }}\\' already exists'"
+
+- name: '[Debian] create MariaDB resource'
+  shell:
+    cmd: >
+      /usr/sbin/pcs resource create {{ resources.db }} ocf:heartbeat:mysql
+      binary="/usr/bin/mysqld_safe"
+      config="/etc/mysql/my.cnf"
+      datadir="/var/lib/mysql"
+      pid="/var/lib/mysql/mysql.pid"
+      user="mysql"
+      additional_parameters="--bind-address=127.0.0.1"
+      op start timeout=60s
+      op stop timeout=60s
+      op monitor interval=20s
+      --group Web
+  register: mysql_failure
+  when: ansible_distribution_file_variety == 'Debian'
+  failed_when: "mysql_failure.rc != 0 and mysql_failure.rc == 1 and mysql_failure.stderr != 'Error: \\'{{ resources.db }}\\' already exists'"
+
+- pause:
+    prompt: 'Please check if MariaDB resource is created correctly'
+
+- name: 'check MariaDB resource'
+  shell:
+    cmd: /usr/sbin/pcs resource cleanup && /usr/sbin/pcs status
+  register: mysql_resource
+
+- name: 'show resources'
+  debug:
+    var: mysql_resource.stdout_lines
+
+- name: 'create IPaddr2 resource'
+  shell:
+    cmd: >
+      /usr/sbin/pcs resource create vip ocf:heartbeat:IPaddr2
+      ip={{ resources.vip }}
+      cidr_netmask=24
+      op monitor interval=20s
+      --group Web
+  register: vip_failure
+  failed_when: "vip_failure.rc != 0 and vip_failure.rc == 1 and vip_failure.stderr != 'Error: \\'vip\\' already exists'"
+
+- pause:
+    prompt: 'check IPaddr2'
+
+- name: 'check IPaddr2 resource'
+  shell:
+    cmd: /usr/sbin/pcs resource cleanup && /usr/sbin/pcs status
+  register: vip_resource
+
+- name: 'show resources'
+  debug:
+    var: vip_resource.stdout_lines
+
+- name: 'create Nginx resource'
+  shell:
+    cmd: >
+      /usr/sbin/pcs resource create {{ resources.webserver }} ocf:heartbeat:nginx
+      configfile=/etc/nginx/nginx.conf
+      op monitor interval=10s
+      --group Web
+  register: nginx_failure
+  failed_when: "nginx_failure.rc != 0 and nginx_failure.rc == 1 and nginx_failure.stderr != 'Error: \\'{{ resources.webserver }}\\' already exists'"
+
+- pause:
+    prompt: 'Please check if Nginx resource is created correctly'
+
+- name: 'check Nginx resource'
+  shell:
+    cmd: /usr/sbin/pcs resource cleanup && /usr/sbin/pcs status
+  register: nginx_resource
+
+- name: 'show resources'
+  debug:
+    var: nginx_resource.stdout_lines
+
+- name: '[RHEL] add colocation: filesystem with DRBD'
+  shell:
+    cmd: "/usr/sbin/pcs constraint colocation add {{ resources.filesystem }} with {{ resources.drbd }}-master INFINITY with-rsc-role=Master"
+  register: fs_constraint
+  failed_when: >
+    fs_constraint.rc != 0 and
+    fs_constraint.rc == 1 and
+    fs_constraint.stderr != 'Error: duplicate constraint already exists, use --force to override\n  fs with drbd0-master (score:INFINITY) (with-rsc-role:Master) (id:colocation-fs-drbd0-master-INFINITY)'
+  when: ansible_distribution_file_variety == 'RedHat'
+
+- name: '[Debian] add colocation: filesystem with DRBD'
+  shell:
+    cmd: "/usr/sbin/pcs constraint colocation add {{ resources.filesystem }} with {{ resources.drbd }}-clone INFINITY with-rsc-role=Master"
+  register: fs_constraint
+  failed_when: >
+    fs_constraint.rc != 0 and
+    fs_constraint.rc == 1 and
+    fs_constraint.stderr != 'Error: duplicate constraint already exists, use --force to override\n  fs with drbd0-clone (score:INFINITY) (with-rsc-role:Master) (id:colocation-fs-drbd0-clone-INFINITY)'
+  when: ansible_distribution_file_variety == 'Debian'
+
+- name: 'add colocation: group Web with filesystem'
+  shell:
+    cmd: "/usr/sbin/pcs constraint colocation add Web with {{ resources.filesystem }}"
+  register: db_colocation
+  failed_when: >
+    db_colocation.rc != 0 and
+    db_colocation.rc == 1 and
+    db_colocation.stderr != 'Error: duplicate constraint already exists, use --force to override\n  Web with fs (score:INFINITY) (id:colocation-Web-fs-INFINITY)'
+
+- name: 'get colocation constraints'
+  shell:
+    cmd: "/usr/sbin/pcs resource cleanup && /usr/sbin/pcs constraint colocation --full"
+  register: colocation_constraints
+
+- name: 'show colocation constraints'
+  debug:
+    var: colocation_constraints.stdout_lines
+
+- name: '[RHEL] add promotion order: DRBD then filesystem'
+  shell:
+    cmd: "/usr/sbin/pcs constraint order promote {{ resources.drbd }}-master then {{ resources.filesystem }}"
+  register: fs_order
+  failed_when: >
+    fs_order.rc != 0 and
+    fs_order.rc == 1 and
+    fs_order.stderr != 'Error: duplicate constraint already exists, use --force to override\n  promote drbd0-master then start fs (kind:Mandatory) (id:order-drbd0-master-fs-mandatory)'
+  when: ansible_distribution_file_variety == 'RedHat'
+
+- name: '[Debian] add promotion order: DRBD then filesystem'
+  shell:
+    cmd: "/usr/sbin/pcs constraint order promote {{ resources.drbd }}-clone then {{ resources.filesystem }}"
+  register: fs_order
+  failed_when: >
+    fs_order.rc != 0 and
+    fs_order.rc == 1 and
+    fs_order.stderr != 'Error: duplicate constraint already exists, use --force to override\n  promote drbd0-clone then start fs (kind:Mandatory) (id:order-drbd0-master-fs-mandatory)'
+  when: ansible_distribution_file_variety == 'Debian'
+
+- name: 'add promotion order: filesystem then group Web'
+  shell:
+    cmd: "/usr/sbin/pcs constraint order {{ resources.filesystem }} then Web"
+  register: web_order
+  failed_when: >
+    web_order.rc != 0 and
+    web_order.rc == 1 and
+    web_order.stderr != 'Error: duplicate constraint already exists, use --force to override\n  start fs then start Web (kind:Mandatory) (id:order-fs-Web-mandatory)'
+
+- name: 'add promotion order: database then vip'
+  shell:
+    cmd: "/usr/sbin/pcs constraint order {{ resources.db }} then vip"
+  register: db_order
+  failed_when: >
+    db_order.rc != 0 and
+    db_order.rc == 1 and
+    db_order.stderr != 'Error: duplicate constraint already exists, use --force to override\n  start mysql then start vip (kind:Mandatory) (id:order-mysql-vip-mandatory)'
+
+- name: 'add promotion order: ip then nginx'
+  shell:
+    cmd: "/usr/sbin/pcs constraint order vip then {{ resources.webserver }}"
+  register: webserver_order
+  failed_when: >
+    webserver_order.rc != 0 and
+    webserver_order.rc == 1 and
+    webserver_order.stderr != 'Error: duplicate constraint already exists, use --force to override\n  start vip then start nginx (kind:Mandatory) (id:order-vip-nginx-mandatory)'
+
+- name: 'get order constraints'
+  shell:
+    cmd: "/usr/sbin/pcs resource cleanup && /usr/sbin/pcs constraint order --full"
+  register: order_constraints
+
+- name: 'show colocation constraints'
+  debug:
+    var: order_constraints.stdout_lines
+
+- name: 'verify everything is ok'
+  shell:
+    cmd: /usr/sbin/crm_verify -LV
