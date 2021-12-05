@@ -3,8 +3,8 @@ all:
     primary:
       hosts:
         master: 
-          ansible_host: 10.10.10.21 
+          ansible_host: 192.168.121.19 
     secondary:
       hosts:
         slave: 
-          ansible_host: 10.10.10.22
+          ansible_host: 192.168.121.166

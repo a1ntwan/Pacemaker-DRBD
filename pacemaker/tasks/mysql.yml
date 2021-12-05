@@ -97,6 +97,7 @@
 - name: 'create test db'
   mysql_db:
     name: '{{ db_name }}'
+    login_unix_socket: /run/mysqld/mysqld.sock
     state: present
   vars:
     ansible_python_interpreter: /bin/python3
@@ -105,6 +106,7 @@
   mysql_user:
     name: '{{ db_user }}'
     host: '{{ item }}'
+    login_unix_socket: /run/mysqld/mysqld.sock
     password: '{{ db_password }}'
     priv: '*.*:ALL'
     state: present

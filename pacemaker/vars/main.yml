@@ -1,14 +1,14 @@
 ---
-disk_patrition: /dev/sda1
+disk_patrition: /dev/vdb1
 resource_name: drbd0
 
 nginx_domain_name: nginx.example.net
 
-db_user:  user
+db_user: user
 db_password: qwerty
 db_name: test_db
 
-bindnetaddr: 10.10.10.0
+bindnetaddr: 192.168.121.0
 
 hacluster_passwd: passwd
 cluster_name: cluster
@@ -20,9 +20,9 @@ resources:
   filesystem: fs
   db: mariadb
   webserver: nginx
-  vip: 10.10.10.25
+  vip: 192.168.121.25
 
-fencevbox:
-  dom0: 10.10.10.1
+fencelibvirt:
+  dom0: 192.168.121.1
   dom0_user: user
   dom0_passwd: password

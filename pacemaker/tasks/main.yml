@@ -21,14 +21,14 @@
   import_tasks: resources.yml
   when: inventory_hostname == 'master'
 
-- name: 'configure fencing with fence_ssh'
-  import_tasks: stonith_ssh.yml
+- name: 'configure fencing with fence_virsh'
+  import_tasks: stonith_virsh.yml
   when:
     - inventory_hostname == 'master'
     - ansible_distribution_file_variety == 'RedHat'
 
-- name: 'configure fencing with fence_vbox'
-  import_tasks: stonith_vbox.yml
+- name: 'configure fencing with external/libvirt'
+  import_tasks: stonith_libvirt.yml
   when:
     - inventory_hostname == 'master'
     - ansible_distribution_file_variety == 'Debian'

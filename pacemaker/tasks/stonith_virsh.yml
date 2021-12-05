@@ -1,0 +1,79 @@
+---
+- name: 'create STONITH agent logfile'
+  file:
+    path: /var/log/stonith.log
+    state: touch
+
+- name: 'add stonith libvirt'
+  shell:
+    cmd: >
+      /usr/sbin/pcs stonith create stonith-libvirt-master fence_virsh
+      username="{{ fencelibvirt.dom0_user }}"
+      password="{{ fencelibvirt.dom0_passwd }}"
+      ssh=yes
+      use_sudo=true
+      ip="{{ fencelibvirt.dom0 }}"
+      plug="pacemaker_node1"
+      pcmk_host_list="pacemaker_node1:{{ hostvars['master']['ansible_host'] }}"
+      debug_file="/var/log/stonith.log"
+      --force
+      &&
+      /usr/sbin/pcs stonith create stonith-libvirt-slave fence_virsh
+      username="{{ fencelibvirt.dom0_user }}"
+      password="{{ fencelibvirt.dom0_passwd }}"
+      ssh=yes
+      use_sudo=true
+      ip="{{ fencelibvirt.dom0 }}"
+      plug="pacemaker_node2"
+      pcmk_host_list="pacemaker_node2:{{ hostvars['slave']['ansible_host'] }}"
+      debug_file="/var/log/stonith.log"
+      --force 
+  register: stonith_failure
+  failed_when: "stonith_failure.rc != 0 and stonith_failure.rc == 1 and stonith_failure.stderr != 'Error: \\'stonith-libvirt-master\\' already exists'"
+
+- name: 'check stonith resources'
+  shell:
+    cmd: /usr/sbin/pcs resource cleanup && /usr/sbin/pcs status
+  register: stonith_resource
+
+- name: 'show resources'
+  debug:
+    var: stonith_resource.stdout_lines
+
+- name: 'add location: stonith master on slave node'
+  shell:
+    cmd: "/usr/sbin/pcs constraint location stonith-libvirt-master avoids {{ hostvars['master']['ansible_host'] }}"
+
+- name: 'add location: stonith slave on master node'
+  shell:
+    cmd: "/usr/sbin/pcs constraint location stonith-libvirt-slave avoids {{ hostvars['slave']['ansible_host'] }}"
+
+- name: 'get location constraints'
+  shell:
+    cmd: "/usr/sbin/pcs resource cleanup && /usr/sbin/pcs constraint location --full"
+  register: location_constraints
+
+- name: 'show location constraints'
+  debug:
+    var: location_constraints.stdout_lines
+
+- name: 'verify everything is ok'
+  shell:
+    cmd: /usr/sbin/crm_verify -LV
+
+- name: 'enable stonith master and slave'
+  shell:
+    cmd: /usr/sbin/pcs stonith enable stonith-libvirt-master && /usr/sbin/pcs stonith enable stonith-libvirt-slave
+
+- name: 'check stonith resources'
+  shell:
+    cmd: /usr/sbin/pcs stonith cleanup && /usr/sbin/pcs status
+  register: stonith_resource
+
+- name: 'show resources'
+  debug:
+    var: stonith_resource.stdout_lines
+
+- name: 'enable cluster to use STONITH'
+  shell:
+    cmd: /usr/sbin/pcs property set stonith-enabled=true

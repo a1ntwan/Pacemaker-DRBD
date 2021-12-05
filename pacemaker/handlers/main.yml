@@ -1,10 +1,4 @@
 ---
-- name: restart-drbd
-  systemd:
-    name: drbd.service
-    state: restarted
-    enabled: yes
-
 - name: restart php-fpm rh
   systemd:
     name: php-fpm
